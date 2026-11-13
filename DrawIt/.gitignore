@@ -1,0 +1,11 @@
+# Dependencies
+node_modules/
+*/node_modules/
+
+# Next.js build & cache
+client/.next/
+client/out/
+
+# Environment variables
+.env
+.env*.local
