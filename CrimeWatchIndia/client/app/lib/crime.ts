@@ -39,7 +39,7 @@ export const INDIA_VIEW = { lat: 22.59, lng: 78.96, altitude: 1.75 } as const;
 /** RSS snippets often arrive as raw HTML (<a><img>…). Reduce to plain text. */
 export function stripHtml(input: string): string {
   return input
-    .replace(/<[^>]*>/g, " ")
+    .replace(/<[^>]*(>|$)/g, " ") // also drops tags cut off mid-way by feed truncation
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&")
     .replace(/&#?\w+;/g, "")

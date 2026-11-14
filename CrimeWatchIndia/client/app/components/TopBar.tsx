@@ -26,7 +26,7 @@ function UtcClock() {
 export default function TopBar({ mapped, scanning, offline, onScan, onTogglePanel }: Props) {
   return (
     <header className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between gap-3 p-3 md:p-4">
-      <div className="pointer-events-auto glass flex items-center gap-3 rounded-2xl py-2 pl-3 pr-4">
+      <div className="pointer-events-auto glass flex items-center gap-2 rounded-2xl py-2 pl-2 pr-3 sm:gap-3 sm:pl-3 sm:pr-4">
         <button
           onClick={onTogglePanel}
           aria-label="Toggle intelligence feed"
@@ -36,14 +36,14 @@ export default function TopBar({ mapped, scanning, offline, onScan, onTogglePane
         </button>
         <EyeMark />
         <div className="leading-none">
-          <h1 className="text-[13px] font-semibold tracking-[0.28em] text-white">THE EYE</h1>
-          <p className="mt-1 font-mono text-[9px] uppercase tracking-[0.2em] text-maroon-200/60">
+          <h1 className="whitespace-nowrap text-[13px] font-semibold tracking-[0.28em] text-white">THE EYE</h1>
+          <p className="mt-1 hidden whitespace-nowrap font-mono text-[9px] uppercase tracking-[0.2em] text-maroon-200/60 sm:block">
             India · Tactical Grid
           </p>
         </div>
       </div>
 
-      <div className="pointer-events-auto glass flex items-center gap-4 rounded-2xl py-2 pl-4 pr-2 font-mono text-[11px] text-white/60">
+      <div className="pointer-events-auto glass flex items-center gap-4 rounded-2xl py-2 pl-3 pr-2 font-mono text-[11px] text-white/60 sm:pl-4">
         <span className="hidden items-center gap-2 sm:flex">
           <span
             className={`live-dot relative h-1.5 w-1.5 rounded-full ${
@@ -61,7 +61,7 @@ export default function TopBar({ mapped, scanning, offline, onScan, onTogglePane
         <button
           onClick={onScan}
           disabled={scanning}
-          className="flex cursor-pointer items-center gap-2 rounded-xl bg-maroon-700 px-3.5 py-2 text-[11px] font-semibold tracking-wide text-white shadow-[0_0_24px_-4px_rgba(190,18,60,0.7)] transition hover:bg-maroon-500 disabled:opacity-60"
+          className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-xl bg-maroon-700 px-3 py-2 text-[11px] font-semibold tracking-wide text-white shadow-[0_0_24px_-4px_rgba(190,18,60,0.7)] transition hover:bg-maroon-500 disabled:opacity-60"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${scanning ? "animate-spin" : ""}`} />
           {scanning ? "Scanning" : "Pull intel"}

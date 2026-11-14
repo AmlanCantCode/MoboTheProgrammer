@@ -24,7 +24,10 @@ export function useCrimes(filters: Filters) {
       const uniqueNew = incoming.filter(
         (c) => !existingTitles.has(c.title.toLowerCase())
       );
-      return [...uniqueNew, ...prev];
+      // keep memory + DOM bounded: newest first, 500 max
+      return [...uniqueNew, ...prev]
+        .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
+        .slice(0, 500);
     });
   }, []);
 

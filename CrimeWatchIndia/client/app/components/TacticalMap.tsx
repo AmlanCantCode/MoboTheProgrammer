@@ -3,17 +3,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Globe, { type GlobeMethods } from "react-globe.gl";
 import * as THREE from "three";
-import { feature } from "topojson-client";
-import type { Topology } from "topojson-specification";
-import countries110m from "world-atlas/countries-110m.json";
 import { createLandDots } from "../lib/landDots";
+import { createBorders } from "../lib/borders";
+import { getConfig } from "../lib/quality";
 import { INDIA_VIEW, SEVERITY, escapeHtml, type Crime } from "../lib/crime";
 
 interface Props {
   crimes: Crime[];
   selected: Crime | null;
   onSelect: (c: Crime | null) => void;
-  /** false while the intro plays; flips true to trigger the cinematic fly-in */
+  /** false while the intro plays (render loop is paused); flips true for the cinematic fly-in */
   ready: boolean;
 }
 
@@ -45,7 +44,6 @@ const HALO_FRAG = /* glsl */ `
   uniform vec3 uColor; uniform float uPower; uniform float uTime;
   varying vec3 vNormal; varying vec3 vView;
   void main() {
-    // back faces: dot is 0 at the outer edge, most negative toward the globe limb
     float f = pow(clamp(-dot(vNormal, vView), 0.0, 1.0), uPower) * 1.35;
     float breathe = 0.9 + 0.1 * sin(uTime * 0.9);
     gl_FragColor = vec4(uColor, clamp(f, 0.0, 1.0) * breathe * 0.85);
@@ -90,12 +88,9 @@ export default function TacticalMap({ crimes, selected, onSelect, ready }: Props
   const disposers = useRef<(() => void)[]>([]);
   const [size, setSize] = useState({ width: 0, height: 0 });
 
+  // Quality tier is decided once, client-side (this component never renders on the server)
+  const cfg = useMemo(() => getConfig(), []);
   const { body, halo } = useGlobeMaterials();
-
-  const land = useMemo(() => {
-    const topo = countries110m as unknown as Topology;
-    return feature(topo, topo.objects.countries as never) as unknown as { features: object[] };
-  }, []);
 
   useEffect(() => {
     selectedRef.current = selected;
@@ -113,8 +108,16 @@ export default function TacticalMap({ crimes, selected, onSelect, ready }: Props
     return () => ro.disconnect();
   }, []);
 
+  // Portrait screens are narrow: sit further back so the whole subcontinent fits
+  const portrait = size.width > 0 && size.width < size.height * 0.9;
+  const homeRef = useRef<{ lat: number; lng: number; altitude: number }>({ ...INDIA_VIEW });
+  useEffect(() => {
+    homeRef.current = portrait ? { ...INDIA_VIEW, altitude: 2.9 } : { ...INDIA_VIEW };
+    if (readyRef.current && !selectedRef.current) globeRef.current?.pointOfView(homeRef.current, 800);
+  }, [portrait]);
+
   const flyHome = useCallback((ms = 1800) => {
-    globeRef.current?.pointOfView(INDIA_VIEW, ms);
+    globeRef.current?.pointOfView(homeRef.current, ms);
   }, []);
 
   /* one-time scene setup */
@@ -122,24 +125,27 @@ export default function TacticalMap({ crimes, selected, onSelect, ready }: Props
     const globe = globeRef.current;
     if (!globe) return;
 
-    globe.renderer().setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    globe.renderer().setPixelRatio(cfg.dpr);
 
     const controls = globe.controls();
     controls.enableDamping = true;
     controls.dampingFactor = 0.07;
-    controls.rotateSpeed = 0.55;
+    controls.rotateSpeed = cfg.low ? 0.7 : 0.55;
     controls.zoomSpeed = 0.55;
     controls.enablePan = false;
     controls.minDistance = 160;
     controls.maxDistance = 420;
 
     // Halo sphere sits just outside the globe
-    const haloMesh = new THREE.Mesh(new THREE.SphereGeometry(GLOBE_RADIUS * 1.22, 96, 96), halo);
+    const haloMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(GLOBE_RADIUS * 1.22, cfg.haloSegments, cfg.haloSegments),
+      halo
+    );
     haloMesh.renderOrder = -1;
     globe.scene().add(haloMesh);
 
-    // Drifting dust shell + halo breathing, driven by a single rAF loop
-    const N = 1800;
+    // Drifting dust shell
+    const N = cfg.dust;
     const pos = new Float32Array(N * 3);
     for (let i = 0; i < N; i++) {
       const r = GLOBE_RADIUS * (1.5 + Math.random() * 2.6);
@@ -151,7 +157,6 @@ export default function TacticalMap({ crimes, selected, onSelect, ready }: Props
     }
     const dustGeo = new THREE.BufferGeometry();
     dustGeo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    // round, soft-edged sprite instead of the default square
     const sprite = document.createElement("canvas");
     sprite.width = sprite.height = 32;
     const sctx = sprite.getContext("2d")!;
@@ -160,12 +165,13 @@ export default function TacticalMap({ crimes, selected, onSelect, ready }: Props
     grad.addColorStop(1, "rgba(255,255,255,0)");
     sctx.fillStyle = grad;
     sctx.fillRect(0, 0, 32, 32);
+    const dustTex = new THREE.CanvasTexture(sprite);
     const dust = new THREE.Points(
       dustGeo,
       new THREE.PointsMaterial({
         color: "#fda4af",
-        size: 1.6,
-        map: new THREE.CanvasTexture(sprite),
+        size: cfg.low ? 2.2 : 1.6,
+        map: dustTex,
         transparent: true,
         opacity: 0.4,
         depthWrite: false,
@@ -173,36 +179,50 @@ export default function TacticalMap({ crimes, selected, onSelect, ready }: Props
     );
     globe.scene().add(dust);
 
-    // Dot-matrix landmasses (replaces h3-based hexPolygons, which throw on some countries)
-    const landDots = createLandDots(GLOBE_RADIUS, INDIA_VIEW);
+    // Dot-matrix landmasses + single-draw-call borders (no H3, no per-country meshes)
+    const landDots = createLandDots(GLOBE_RADIUS, INDIA_VIEW, cfg.dotLattice);
     globe.scene().add(landDots.points);
-    sceneObjs.current = [dust, haloMesh, landDots.points];
-    disposers.current = [landDots.dispose];
+    const borders = createBorders(GLOBE_RADIUS);
+    globe.scene().add(borders.object);
+
+    sceneObjs.current = [dust, haloMesh, landDots.points, borders.object];
+    disposers.current = [landDots.dispose, borders.dispose, () => dustTex.dispose(), () => dustGeo.dispose()];
+    if (cfg.low) landDots.uniforms.uPx.value *= 1.35; // fewer, slightly larger dots
 
     const t0 = performance.now();
     let last = t0;
     const tick = (now: number) => {
-      halo.uniforms.uTime.value = (now - t0) / 1000;
-      landDots.uniforms.uTime.value = (now - t0) / 1000;
-      if (readyRef.current && landDots.uniforms.uReveal.value < 1) {
-        landDots.uniforms.uReveal.value = Math.min(1, landDots.uniforms.uReveal.value + (now - last) / 3600);
-      }
+      const t = (now - t0) / 1000;
+      halo.uniforms.uTime.value = t;
+      landDots.uniforms.uTime.value = t;
+      const reveal = landDots.uniforms.uReveal;
+      if (readyRef.current && reveal.value < 1) reveal.value = Math.min(1, reveal.value + (now - last) / 3600);
+      borders.material.opacity = 0.4 * Math.min(1, reveal.value * 2.2);
       dust.rotation.y += (now - last) * 0.000012;
-      dust.rotation.x = Math.sin((now - t0) / 9000) * 0.05;
+      dust.rotation.x = Math.sin(t / 9) * 0.05;
       last = now;
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
 
-    // Start far out in space if the intro is still playing; the fly-in fires when `ready` flips
-    if (readyRef.current) flyHome(2200);
-    else globe.pointOfView({ ...INDIA_VIEW, altitude: 5.5 }, 0);
-  }, [halo, flyHome]);
+    if (readyRef.current) {
+      flyHome(2200);
+    } else {
+      // Intro still playing: park far out in space and stop rendering until the hand-over,
+      // so the intro's particles and the globe never fight for the GPU.
+      globe.pointOfView({ ...homeRef.current, altitude: 6 }, 0);
+      globe.pauseAnimation();
+    }
+  }, [halo, flyHome, cfg]);
 
   /* cinematic fly-in when the intro hands over */
   useEffect(() => {
     readyRef.current = ready;
-    if (ready) globeRef.current?.pointOfView(INDIA_VIEW, 3800);
+    if (!ready) return;
+    const g = globeRef.current;
+    if (!g) return;
+    g.resumeAnimation();
+    g.pointOfView(homeRef.current, 3800);
   }, [ready]);
 
   /* ease back to India once the user stops interacting (and nothing is selected) */
@@ -232,20 +252,25 @@ export default function TacticalMap({ crimes, selected, onSelect, ready }: Props
     const globe = globeRef.current;
     if (!globe || !readyRef.current) return;
     if (selected) {
-      // Nudge the camera east so the pin lands left of centre, clear of the dossier card
-      globe.pointOfView({ lat: selected.lat, lng: selected.lng + 3.2, altitude: 1.1 }, 1500);
+      // Nudge the camera so the pin lands clear of the dossier card (card sits below on phones)
+      globe.pointOfView(
+        cfg.low
+          ? { lat: selected.lat - 3.5, lng: selected.lng, altitude: 1.7 }
+          : { lat: selected.lat, lng: selected.lng + 3.2, altitude: 1.1 },
+        1500
+      );
     } else {
       flyHome(1600);
     }
-  }, [selected, flyHome]);
+  }, [selected, flyHome, cfg.low]);
 
-  /* stop burning GPU while the tab is hidden */
+  /* stop burning GPU/battery while the tab is hidden */
   useEffect(() => {
     const onVis = () => {
       const g = globeRef.current;
       if (!g) return;
       if (document.hidden) g.pauseAnimation();
-      else g.resumeAnimation();
+      else if (readyRef.current) g.resumeAnimation();
     };
     document.addEventListener("visibilitychange", onVis);
     return () => document.removeEventListener("visibilitychange", onVis);
@@ -263,27 +288,33 @@ export default function TacticalMap({ crimes, selected, onSelect, ready }: Props
     []
   );
 
-  /* data */
+  /* data — every pin is its own mesh, so cap how many we draw (HIGH first, then recency) */
+  const visible = useMemo(() => {
+    if (crimes.length <= cfg.maxPins) return crimes;
+    const ranked = [...crimes].sort((a, b) => SEVERITY[a.severity].rank - SEVERITY[b.severity].rank).slice(0, cfg.maxPins);
+    return selected && !ranked.some((c) => c.id === selected.id) ? [...ranked, selected] : ranked;
+  }, [crimes, selected, cfg.maxPins]);
+
   const points = useMemo(
     () =>
-      crimes.map((c) => ({
+      visible.map((c) => ({
         ...c,
         color: SEVERITY[c.severity].color,
         radius: c.id === selected?.id ? 0.7 : c.severity === "HIGH" ? 0.5 : 0.36,
       })),
-    [crimes, selected]
+    [visible, selected]
   );
 
   const rings = useMemo<RingDatum[]>(() => {
-    const out: RingDatum[] = crimes
+    const out: RingDatum[] = visible
       .filter((c) => c.severity === "HIGH" && c.id !== selected?.id)
+      .slice(0, cfg.maxRings)
       .map((c) => ({ lat: c.lat, lng: c.lng, rgb: SEVERITY.HIGH.rgb, maxR: 3.2, speed: 1.6, period: 1900 }));
     if (selected) {
-      // Selected pin gets a tighter, faster, white "lock-on" pulse
       out.push({ lat: selected.lat, lng: selected.lng, rgb: "255,255,255", maxR: 2.2, speed: 2.6, period: 1000 });
     }
     return out;
-  }, [crimes, selected]);
+  }, [visible, selected, cfg.maxRings]);
 
   const tooltip = useCallback((d: object) => {
     const c = d as Crime & { color: string };
@@ -293,7 +324,10 @@ export default function TacticalMap({ crimes, selected, onSelect, ready }: Props
   }, []);
 
   return (
-    <div ref={containerRef} className="stage-bg absolute inset-0 cursor-grab select-none overflow-hidden active:cursor-grabbing">
+    <div
+      ref={containerRef}
+      className="stage-bg absolute inset-0 cursor-grab touch-none select-none overflow-hidden active:cursor-grabbing"
+    >
       <div className="stage-halftone" />
       {size.width > 0 && (
         <Globe
@@ -304,12 +338,6 @@ export default function TacticalMap({ crimes, selected, onSelect, ready }: Props
           globeMaterial={body}
           showAtmosphere={false}
           onGlobeReady={handleReady}
-          /* landmasses: sparse dot matrix + faint borders */
-          polygonsData={land.features}
-          polygonCapColor={() => "rgba(0,0,0,0)"}
-          polygonSideColor={() => "rgba(0,0,0,0)"}
-          polygonStrokeColor={() => "rgba(190,18,60,0.4)"}
-          polygonAltitude={0.002}
           /* incident pins */
           pointsData={points}
           pointLat="lat"
@@ -317,9 +345,9 @@ export default function TacticalMap({ crimes, selected, onSelect, ready }: Props
           pointColor="color"
           pointRadius="radius"
           pointAltitude={0.012}
-          pointResolution={12}
+          pointResolution={cfg.pinSegments}
           pointsMerge={false}
-          pointLabel={tooltip}
+          pointLabel={cfg.low ? undefined : tooltip}
           onPointClick={(p) => onSelect(p as unknown as Crime)}
           onGlobeClick={() => onSelect(null)}
           /* radar pulses */
@@ -329,6 +357,7 @@ export default function TacticalMap({ crimes, selected, onSelect, ready }: Props
           ringMaxRadius="maxR"
           ringPropagationSpeed="speed"
           ringRepeatPeriod="period"
+          ringResolution={cfg.ringSegments}
           ringColor={(d: object) => (t: number) => `rgba(${(d as RingDatum).rgb},${Math.pow(1 - t, 1.6) * 0.85})`}
         />
       )}

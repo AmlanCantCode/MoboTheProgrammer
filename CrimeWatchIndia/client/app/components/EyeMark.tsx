@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { getQuality } from "../lib/quality";
 
 /** Halftone eye that tracks the cursor with eased motion and an occasional blink. */
 export default function EyeMark({ width = 64, height = 28 }: { width?: number; height?: number }) {
@@ -36,7 +37,12 @@ export default function EyeMark({ width = 64, height = 28 }: { width?: number; h
     const cx = width / 2;
     const cy = height / 2;
 
+    const gap = getQuality() === "low" ? 50 : 33; // ≈20 / 30 fps is plenty for a 64px logo
+    let lastDraw = 0;
     const draw = (t: number) => {
+      raf = requestAnimationFrame(draw);
+      if (t - lastDraw < gap) return;
+      lastDraw = t;
       pupil.x += (target.x - pupil.x) * 0.14;
       pupil.y += (target.y - pupil.y) * 0.14;
 
@@ -79,7 +85,6 @@ export default function EyeMark({ width = 64, height = 28 }: { width?: number; h
         ctx.arc(cx + pupil.x, cy + pupil.y, 2.4 * open, 0, Math.PI * 2);
         ctx.fill();
       }
-      raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
 

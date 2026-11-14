@@ -1,6 +1,7 @@
 "use client";
 
-import { memo, useEffect, useRef } from "react";
+import { memo, useEffect, useRef, useState } from "react";
+import { getConfig } from "../lib/quality";
 import { Search } from "lucide-react";
 import { CATEGORIES, SEVERITY, stripHtml, timeAgo, type Crime, type Severity } from "../lib/crime";
 
@@ -37,7 +38,7 @@ const Row = memo(function Row({
       id={`crime-${crime.id}`}
       onClick={() => onSelect(crime)}
       style={{ animationDelay: `${Math.min(index, 10) * 28}ms` }}
-      className={`animate-feed group relative block w-full cursor-pointer px-4 py-3.5 text-left transition-colors ${
+      className={`animate-feed [content-visibility:auto] [contain-intrinsic-size:auto_112px] group relative block w-full cursor-pointer px-4 py-3.5 text-left transition-colors ${
         active ? "bg-white/[0.06]" : "hover:bg-white/[0.03]"
       }`}
     >
@@ -70,6 +71,10 @@ const Row = memo(function Row({
 
 export default function FeedPanel(p: Props) {
   const searchRef = useRef<HTMLInputElement>(null);
+  // Render the list in pages: hundreds of rows with blurred glass behind them is what janks phones
+  const pageSize = getConfig().feedPage;
+  const [limit, setLimit] = useState(pageSize);
+  const shown = p.crimes.slice(0, limit);
 
   // "/" focuses search
   useEffect(() => {
@@ -99,7 +104,7 @@ export default function FeedPanel(p: Props) {
 
   return (
     <aside
-      className={`glass absolute bottom-3 left-3 right-3 top-[76px] z-20 flex-col overflow-hidden rounded-3xl md:bottom-4 md:left-4 md:right-auto md:top-[84px] md:flex md:w-[372px] ${
+      className={`glass absolute bottom-3 left-3 right-3 top-[76px] z-20 flex-col overflow-hidden rounded-3xl pb-[env(safe-area-inset-bottom)] md:bottom-4 md:left-4 md:right-auto md:top-[84px] md:flex md:w-[372px] ${
         p.open ? "flex" : "hidden"
       }`}
     >
@@ -163,9 +168,19 @@ export default function FeedPanel(p: Props) {
         ) : p.crimes.length === 0 ? (
           <p className="p-8 text-center text-xs text-white/35">No incidents match these filters.</p>
         ) : (
-          p.crimes.map((c, i) => (
-            <Row key={c.id} crime={c} index={i} active={p.activeId === c.id} onSelect={p.onSelect} />
-          ))
+          <>
+            {shown.map((c, i) => (
+              <Row key={c.id} crime={c} index={i} active={p.activeId === c.id} onSelect={p.onSelect} />
+            ))}
+            {p.crimes.length > shown.length && (
+              <button
+                onClick={() => setLimit((l) => l + pageSize)}
+                className="block w-full cursor-pointer py-4 font-mono text-[10.5px] tracking-widest text-maroon-200/70 transition hover:bg-white/[0.03]"
+              >
+                SHOW {Math.min(pageSize, p.crimes.length - shown.length)} MORE · {p.crimes.length - shown.length} HIDDEN
+              </button>
+            )}
+          </>
         )}
       </div>
     </aside>

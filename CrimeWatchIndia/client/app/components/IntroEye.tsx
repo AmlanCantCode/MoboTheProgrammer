@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
+import { getConfig } from "../lib/quality";
 
 /**
  * Cinematic intro: the halftone eye is rebuilt as GPU particles.
@@ -13,11 +14,10 @@ import * as THREE from "three";
 
 const WORLD_W = 16; // eye width in world units
 const IRIS = { x: (495 / 1000 - 0.5) * WORLD_W, y: -(470 / 1000 - 0.5) * WORLD_W };
-const ASSEMBLE_S = 3.4;
 const EXIT_S = 1.6;
 
 const VERT = /* glsl */ `
-  uniform float uTime, uAssemble, uExit, uPx;
+  uniform float uTime, uAssemble, uExit, uPx, uSize;
   uniform vec2 uMouse, uLook;
   attribute vec3 aTarget;
   attribute vec4 aRand;
@@ -59,7 +59,7 @@ const VERT = /* glsl */ `
 
     vec4 mv = modelViewMatrix * vec4(p, 1.0);
     gl_Position = projectionMatrix * mv;
-    gl_PointSize = (1.1 + aRand.x * 0.9 + inf * 2.4) * uPx * (16.0 / -mv.z);
+    gl_PointSize = (1.1 + aRand.x * 0.9 + inf * 2.4) * uSize * uPx * (16.0 / -mv.z);
 
     vShade = aShade;
     vHeat = inf;
@@ -81,19 +81,23 @@ interface Props {
   exiting: boolean;
   onEnter: () => void;
   onDone: () => void;
+  /** fired once the eye has fully assembled (the page uses it to start loading the globe) */
+  onReady?: () => void;
 }
 
-export default function IntroEye({ exiting, onEnter, onDone }: Props) {
+export default function IntroEye({ exiting, onEnter, onDone, onReady }: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
   const counterRef = useRef<HTMLSpanElement>(null);
   const exitingRef = useRef(exiting);
   const onDoneRef = useRef(onDone);
+  const onReadyRef = useRef(onReady);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
     exitingRef.current = exiting;
     onDoneRef.current = onDone;
-  }, [exiting, onDone]);
+    onReadyRef.current = onReady;
+  }, [exiting, onDone, onReady]);
 
   // Enter / Space / Esc all start the transition
   useEffect(() => {
@@ -109,8 +113,9 @@ export default function IntroEye({ exiting, onEnter, onDone }: Props) {
     const mount = mountRef.current;
     if (!mount) return;
 
-    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: false });
-    const px = Math.min(window.devicePixelRatio || 1, 2);
+    const cfg = getConfig();
+    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: false, powerPreference: cfg.low ? "low-power" : "high-performance" });
+    const px = cfg.dpr;
     renderer.setPixelRatio(px);
     renderer.setClearColor(0x000000, 0);
     mount.appendChild(renderer.domElement);
@@ -127,6 +132,7 @@ export default function IntroEye({ exiting, onEnter, onDone }: Props) {
       uAssemble: { value: 0 },
       uExit: { value: 0 },
       uPx: { value: px * (window.innerHeight / 900) },
+      uSize: { value: cfg.introPointScale },
       uMouse: { value: new THREE.Vector2(99, 99) },
       uLook: { value: new THREE.Vector2() },
     };
@@ -148,7 +154,7 @@ export default function IntroEye({ exiting, onEnter, onDone }: Props) {
     img.src = "/eye.png";
     img.onload = () => {
       if (disposed) return;
-      const S = 1000;
+      const S = cfg.introSample; // 1000 on desktop, 500 on phones → ~4× fewer particles
       const c = document.createElement("canvas");
       c.width = c.height = S;
       const ctx = c.getContext("2d", { willReadFrequently: true })!;
@@ -204,11 +210,13 @@ export default function IntroEye({ exiting, onEnter, onDone }: Props) {
     const ndc = new THREE.Vector2(0, 0);
     const smooth = new THREE.Vector2(0, 0);
     const onMove = (e: PointerEvent) => {
+      lastMove = performance.now();
       ndc.set((e.clientX / window.innerWidth) * 2 - 1, -((e.clientY / window.innerHeight) * 2 - 1));
     };
     window.addEventListener("pointermove", onMove, { passive: true });
 
     let startTime = performance.now() + 1e9; // wait for image
+    let lastMove = 0;
     let exitStart = 0;
     let raf = 0;
     let announced = false;
@@ -218,6 +226,10 @@ export default function IntroEye({ exiting, onEnter, onDone }: Props) {
       raf = requestAnimationFrame(frame);
       uniforms.uTime.value = (now - t0) / 1000;
 
+      // phones have no hover: let the eye wander on its own until the finger drags it
+      if (cfg.low && now - lastMove > 2200) {
+        ndc.set(Math.sin((now - t0) / 1800) * 0.45, Math.cos((now - t0) / 2300) * 0.25);
+      }
       smooth.lerp(ndc, 0.08);
       const visH = 2 * Math.tan((45 * Math.PI) / 360) * camera.position.z;
       const visW = visH * camera.aspect;
@@ -234,12 +246,13 @@ export default function IntroEye({ exiting, onEnter, onDone }: Props) {
       group.rotation.y += (smooth.x * 0.22 - group.rotation.y) * 0.05;
       group.rotation.x += (-smooth.y * 0.14 - group.rotation.x) * 0.05;
 
-      const asm = THREE.MathUtils.clamp((now - startTime) / 1000 / ASSEMBLE_S, 0, 1);
+      const asm = THREE.MathUtils.clamp((now - startTime) / 1000 / cfg.introAssembleS, 0, 1);
       uniforms.uAssemble.value = asm;
       if (counterRef.current) counterRef.current.textContent = String(Math.round(asm * 100)).padStart(3, "0");
       if (asm >= 1 && !announced) {
         announced = true;
         setReady(true);
+        onReadyRef.current?.();
       }
 
       if (exitingRef.current) {
@@ -304,7 +317,7 @@ export default function IntroEye({ exiting, onEnter, onDone }: Props) {
           ))}
         </h1>
         <p
-          className="reveal-letter font-mono text-[10px] uppercase tracking-[0.45em] text-maroon-200/70"
+          className="reveal-letter px-4 text-center font-mono text-[9px] uppercase tracking-[0.28em] text-maroon-200/70 sm:text-[10px] sm:tracking-[0.45em]"
           style={{ animationDelay: "1500ms" }}
         >
           Real-time crime intelligence · India

@@ -18,7 +18,7 @@ export default function Dossier({ crime, onClose }: { crime: Crime; onClose: () 
     <section
       key={crime.id}
       aria-label="Incident dossier"
-      className="animate-dossier glass absolute inset-x-3 bottom-3 z-30 rounded-3xl p-5 md:inset-x-auto md:bottom-4 md:right-4 md:w-[440px]"
+      className="animate-dossier glass absolute inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-30 rounded-3xl p-5 md:inset-x-auto md:bottom-4 md:right-4 md:w-[440px]"
       style={{ boxShadow: `0 0 0 1px rgba(${sev.rgb},0.18), 0 30px 80px -30px rgba(${sev.rgb},0.35)` }}
     >
       <div className="flex items-center justify-between">
