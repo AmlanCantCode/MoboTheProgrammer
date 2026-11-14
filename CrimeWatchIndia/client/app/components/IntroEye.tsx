@@ -206,17 +206,13 @@ export default function IntroEye({ exiting, onEnter, onDone, onReady }: Props) {
     const ro = new ResizeObserver(resize);
     ro.observe(mount);
 
-    // pointer → eye-space coordinates (smoothed)
-    const ndc = new THREE.Vector2(0, 0);
+    // autonomous gaze: the eye darts to random points, holds, and occasionally recentres
+    const gaze = new THREE.Vector2(0, 0);
     const smooth = new THREE.Vector2(0, 0);
-    const onMove = (e: PointerEvent) => {
-      lastMove = performance.now();
-      ndc.set((e.clientX / window.innerWidth) * 2 - 1, -((e.clientY / window.innerHeight) * 2 - 1));
-    };
-    window.addEventListener("pointermove", onMove, { passive: true });
+    let nextGaze = 0;
+    uniforms.uMouse.value.set(999, 999); // no cursor repulsion
 
     let startTime = performance.now() + 1e9; // wait for image
-    let lastMove = 0;
     let exitStart = 0;
     let raf = 0;
     let announced = false;
@@ -226,21 +222,13 @@ export default function IntroEye({ exiting, onEnter, onDone, onReady }: Props) {
       raf = requestAnimationFrame(frame);
       uniforms.uTime.value = (now - t0) / 1000;
 
-      // phones have no hover: let the eye wander on its own until the finger drags it
-      if (cfg.low && now - lastMove > 2200) {
-        ndc.set(Math.sin((now - t0) / 1800) * 0.45, Math.cos((now - t0) / 2300) * 0.25);
+      if (now >= nextGaze) {
+        if (Math.random() < 0.25) gaze.set(0, 0);
+        else gaze.set((Math.random() * 2 - 1) * 0.95, (Math.random() * 2 - 1) * 0.8);
+        nextGaze = now + 900 + Math.random() * 2200;
       }
-      smooth.lerp(ndc, 0.08);
-      const visH = 2 * Math.tan((45 * Math.PI) / 360) * camera.position.z;
-      const visW = visH * camera.aspect;
-      const s = group.scale.x;
-      const mx = (smooth.x * visW * 0.5) / s;
-      const my = (smooth.y * visH * 0.5) / s - group.position.y / s;
-      uniforms.uMouse.value.set(mx, my);
-      uniforms.uLook.value.set(
-        THREE.MathUtils.clamp(mx * 0.1, -0.75, 0.75),
-        THREE.MathUtils.clamp(my * 0.16, -0.4, 0.4)
-      );
+      smooth.lerp(gaze, 0.06);
+      uniforms.uLook.value.set(smooth.x * 0.75, smooth.y * 0.4);
 
       // parallax tilt gives the flat image depth
       group.rotation.y += (smooth.x * 0.22 - group.rotation.y) * 0.05;
@@ -274,7 +262,6 @@ export default function IntroEye({ exiting, onEnter, onDone, onReady }: Props) {
       disposed = true;
       cancelAnimationFrame(raf);
       ro.disconnect();
-      window.removeEventListener("pointermove", onMove);
       geometry?.dispose();
       material.dispose();
       renderer.dispose();

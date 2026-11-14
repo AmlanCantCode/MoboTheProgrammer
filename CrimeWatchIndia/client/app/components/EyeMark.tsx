@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { getQuality } from "../lib/quality";
 
-/** Halftone eye that tracks the cursor with eased motion and an occasional blink. */
+/** Halftone eye that looks around on its own with eased motion and an occasional blink. */
 export default function EyeMark({ width = 64, height = 28 }: { width?: number; height?: number }) {
   const ref = useRef<HTMLCanvasElement>(null);
 
@@ -23,16 +23,7 @@ export default function EyeMark({ width = 64, height = 28 }: { width?: number; h
     let nextBlink = performance.now() + 2500;
     let raf = 0;
 
-    const onMove = (e: MouseEvent) => {
-      const r = canvas.getBoundingClientRect();
-      const dx = e.clientX - (r.left + r.width / 2);
-      const dy = e.clientY - (r.top + r.height / 2);
-      const d = Math.hypot(dx, dy) || 1;
-      const m = Math.min(d * 0.12, 7);
-      target.x = (dx / d) * m;
-      target.y = (dy / d) * m * 0.55;
-    };
-    window.addEventListener("mousemove", onMove, { passive: true });
+    let nextGaze = 0;
 
     const cx = width / 2;
     const cy = height / 2;
@@ -43,6 +34,16 @@ export default function EyeMark({ width = 64, height = 28 }: { width?: number; h
       raf = requestAnimationFrame(draw);
       if (t - lastDraw < gap) return;
       lastDraw = t;
+      if (t >= nextGaze) {
+        if (Math.random() < 0.25) {
+          target.x = 0;
+          target.y = 0;
+        } else {
+          target.x = (Math.random() * 2 - 1) * 7;
+          target.y = (Math.random() * 2 - 1) * 4;
+        }
+        nextGaze = t + 900 + Math.random() * 2200;
+      }
       pupil.x += (target.x - pupil.x) * 0.14;
       pupil.y += (target.y - pupil.y) * 0.14;
 
@@ -89,7 +90,6 @@ export default function EyeMark({ width = 64, height = 28 }: { width?: number; h
     raf = requestAnimationFrame(draw);
 
     return () => {
-      window.removeEventListener("mousemove", onMove);
       cancelAnimationFrame(raf);
     };
   }, [width, height]);
